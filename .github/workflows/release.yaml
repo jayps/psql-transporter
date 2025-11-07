@@ -1,0 +1,90 @@
+name: Release on tag
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write  # needed to create releases & upload assets
+
+jobs:
+  build:
+    name: Build matrix
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        go-version: ["1.22.x"]
+        os: [linux, darwin]
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Check out
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go-version }}
+          cache: true
+
+      - name: Derive version from tag
+        id: ver
+        run: echo "VERSION=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        env:
+          CGO_ENABLED: 0
+          GOOS: ${{ matrix.os }}
+          GOARCH: ${{ matrix.arch }}
+          VERSION: ${{ steps.ver.outputs.VERSION }}
+        run: |
+          BIN_NAME=psql-transporter
+          OUT_DIR=dist/${GOOS}-${GOARCH}
+          mkdir -p "${OUT_DIR}"
+
+          # Optional: embed version into your binary (see main.go snippet below)
+          LDFLAGS="-s -w -X main.version=${VERSION}"
+
+          # Use .exe if targeting windows someday (not in this matrix)
+          go build -trimpath -ldflags "$LDFLAGS" -o "${OUT_DIR}/${BIN_NAME}" ./cmd/psql-transporter
+
+          # Package as tar.gz with a friendly folder name
+          PKG_NAME="${BIN_NAME}_${VERSION}_${GOOS}_${GOARCH}"
+          mkdir -p "dist/pkg/${PKG_NAME}"
+          cp README.md LICENSE "dist/${GOOS}-${GOARCH}/${BIN_NAME}" "dist/pkg/${PKG_NAME}/"
+          tar -C dist/pkg -czf "dist/${PKG_NAME}.tar.gz" "${PKG_NAME}"
+
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz > "checksums_${{ steps.ver.outputs.VERSION }}.txt"
+
+      - name: Upload build artifacts (for debugging)
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+  release:
+    name: Create GitHub Release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          name: ${{ github.ref_name }}
+          draft: false
+          prerelease: false
+          files: |
+            dist/*.tar.gz
+            dist/checksums_${{ github.ref_name }}.txt

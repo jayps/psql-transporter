@@ -13,6 +13,8 @@ import (
 	"github.com/jayps/psql-transporter/internal/ui"
 )
 
+var version = "dev" // overridden by -ldflags "-X main.version=..."
+
 func main() {
 	root := &cobra.Command{
 		Use:   "psql-transporter",
