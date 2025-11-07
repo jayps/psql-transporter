@@ -44,39 +44,40 @@ jobs:
           OUT_DIR=dist/${GOOS}-${GOARCH}
           mkdir -p "${OUT_DIR}"
 
-          # Optional: embed version into your binary (see main.go snippet below)
           LDFLAGS="-s -w -X main.version=${VERSION}"
-
-          # Use .exe if targeting windows someday (not in this matrix)
           go build -trimpath -ldflags "$LDFLAGS" -o "${OUT_DIR}/${BIN_NAME}" ./cmd/psql-transporter
 
-          # Package as tar.gz with a friendly folder name
           PKG_NAME="${BIN_NAME}_${VERSION}_${GOOS}_${GOARCH}"
           mkdir -p "dist/pkg/${PKG_NAME}"
           cp README.md LICENSE "dist/${GOOS}-${GOARCH}/${BIN_NAME}" "dist/pkg/${PKG_NAME}/"
           tar -C dist/pkg -czf "dist/${PKG_NAME}.tar.gz" "${PKG_NAME}"
 
-      - name: Generate checksums
-        run: |
-          cd dist
-          sha256sum *.tar.gz > "checksums_${{ steps.ver.outputs.VERSION }}.txt"
-
-      - name: Upload build artifacts (for debugging)
+      - name: Upload artifact (unique per matrix)
         uses: actions/upload-artifact@v4
         with:
-          name: dist
-          path: dist
+          name: dist-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            dist/*.tar.gz
+          if-no-files-found: error
+          retention-days: 7
 
   release:
     name: Create GitHub Release
     needs: build
     runs-on: ubuntu-latest
     steps:
-      - name: Download artifacts
+      - name: Download all artifacts and merge
         uses: actions/download-artifact@v4
         with:
-          name: dist
+          pattern: dist-*
+          merge-multiple: true
           path: dist
+
+      - name: Generate checksums (all archives)
+        run: |
+          cd dist
+          sha256sum *.tar.gz > "checksums_${{ github.ref_name }}.txt"
+          ls -l
 
       - name: Create Release
         uses: softprops/action-gh-release@v2
