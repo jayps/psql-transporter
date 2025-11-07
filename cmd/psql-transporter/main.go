@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -16,6 +17,15 @@ import (
 var version = "dev" // overridden by -ldflags "-X main.version=..."
 
 func main() {
+	showVersion := flag.Bool("v", false, "Print version and exit")
+	flag.BoolVar(showVersion, "version", false, "Print version and exit")
+	flag.Parse()
+
+	if *showVersion {
+		fmt.Println("psql-transporter version:", version)
+		os.Exit(0)
+	}
+
 	root := &cobra.Command{
 		Use:   "psql-transporter",
 		Short: "DB export/import helper for Postgres",
