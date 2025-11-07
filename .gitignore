@@ -1,0 +1,4 @@
+bin/
+psql-transporter.yaml
+*.sql
+.idea
