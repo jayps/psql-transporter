@@ -91,20 +91,80 @@ jobs:
             dist/checksums_${{ github.ref_name }}.txt
 
   bump-tap:
-    name: Bump Homebrew tap
+    name: Update Homebrew tap (multi-URL)
     needs: release
     runs-on: ubuntu-latest
     steps:
-      - name: Bump formula in tap repo
-        uses: dawidd6/action-homebrew-bump-formula@v5
-        env:
-          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+      - name: Set versions
+        id: v
+        run: |
+          echo "TAG=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          echo "VER=${GITHUB_REF_NAME#v}" >> $GITHUB_OUTPUT   # strip leading v
+
+      - name: Checkout tap repo
+        uses: actions/checkout@v4
         with:
+          repository: jayps/homebrew-psql-transporter
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          tap: jayps/homebrew-psql-transporter
-          formula: psql-transporter
-          tag: ${{ github.ref_name }}
-          no_fork: true
-          force: true
-          user_name: "JP Meyer"
-          user_email: "jp@jpmeyer.dev"
+          path: tap
+
+      - name: Download release tarballs & compute sha256
+        id: shas
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.v.outputs.TAG }}"
+          VER="${{ steps.v.outputs.VER }}"
+
+          base="https://github.com/jayps/psql-transporter/releases/download/${TAG}"
+
+          curl -L -o darwin_amd64.tgz "${base}/psql-transporter_${TAG}_darwin_amd64.tar.gz"
+          curl -L -o darwin_arm64.tgz "${base}/psql-transporter_${TAG}_darwin_arm64.tar.gz"
+          curl -L -o linux_amd64.tgz  "${base}/psql-transporter_${TAG}_linux_amd64.tar.gz"
+          curl -L -o linux_arm64.tgz  "${base}/psql-transporter_${TAG}_linux_arm64.tar.gz"
+
+          sha_darwin_amd64=$(sha256sum darwin_amd64.tgz | awk '{print $1}')
+          sha_darwin_arm64=$(sha256sum darwin_arm64.tgz | awk '{print $1}')
+          sha_linux_amd64=$(sha256sum  linux_amd64.tgz  | awk '{print $1}')
+          sha_linux_arm64=$(sha256sum  linux_arm64.tgz  | awk '{print $1}')
+
+          {
+            echo "DARWIN_AMD64=${sha_darwin_amd64}"
+            echo "DARWIN_ARM64=${sha_darwin_arm64}"
+            echo "LINUX_AMD64=${sha_linux_amd64}"
+            echo "LINUX_ARM64=${sha_linux_arm64}"
+          } >> $GITHUB_OUTPUT
+
+      - name: Update formula
+        run: |
+          set -euo pipefail
+          TAG="${{ steps.v.outputs.TAG }}"
+          VER="${{ steps.v.outputs.VER }}"
+          F="tap/Formula/psql-transporter.rb"
+
+          # Update version line
+          sed -i -E "s/^  version \"[0-9]+\.[0-9]+\.[0-9]+\"/  version \"${VER}\"/" "$F"
+
+          # Update all four URLs (literal replace: v<old> -> v<new>)
+          # We replace any v<digits.digits.digits> in the URLs with the new TAG.
+          sed -i -E "s|(releases/download/)v[0-9]+\.[0-9]+\.[0-9]+/|\1${TAG}/|g" "$F"
+          sed -i -E "s|psql-transporter_v[0-9]+\.[0-9]+\.[0-9]+_|psql-transporter_${TAG}_|g" "$F"
+
+          # Update sha256s under each URL block
+          # macOS
+          sed -i -E "/darwin_arm64\.tar\.gz\"$/!b;n;s|sha256 \".*\"|sha256 \"${{ steps.shas.outputs.DARWIN_ARM64 }}\"|" "$F"
+          sed -i -E "/darwin_amd64\.tar\.gz\"$/!b;n;s|sha256 \".*\"|sha256 \"${{ steps.shas.outputs.DARWIN_AMD64 }}\"|" "$F"
+          # Linux
+          sed -i -E "/linux_arm64\.tar\.gz\"$/!b;n;s|sha256 \".*\"|sha256 \"${{ steps.shas.outputs.LINUX_ARM64 }}\"|" "$F"
+          sed -i -E "/linux_amd64\.tar\.gz\"$/!b;n;s|sha256 \".*\"|sha256 \"${{ steps.shas.outputs.LINUX_AMD64 }}\"|" "$F"
+
+          echo "Resulting formula:"
+          cat "$F"
+
+      - name: Commit & push
+        working-directory: tap
+        run: |
+          git config user.name "JP Meyer"
+          git config user.email "jp@jpmeyer.dev"
+          git add Formula/psql-transporter.rb
+          git commit -m "psql-transporter: bump to v${{ steps.v.outputs.VER }}"
+          git push
