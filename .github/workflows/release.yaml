@@ -89,3 +89,16 @@ jobs:
           files: |
             dist/*.tar.gz
             dist/checksums_${{ github.ref_name }}.txt
+
+  bump-tap:
+    name: Bump Homebrew tap
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Bump formula in tap repo
+        uses: dawidd6/action-homebrew-bump-formula@v3
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          formula_name: psql-transporter
+          tap: jayps/homebrew-psql-transporter
+          force: true
