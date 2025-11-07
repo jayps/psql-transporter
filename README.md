@@ -38,8 +38,6 @@ A small, friendly CLI to **export** a PostgreSQL database to SQL and **import** 
 ---
 
 ## Requirements
-
-- Go 1.21+ (older may work, but this is tested with 1.21+)
 - PostgreSQL client tools on your `PATH`:
   - `pg_dump`
   - `psql`
@@ -53,12 +51,14 @@ Install tips:
   ```bash
   sudo apt-get install postgresql-client
   ```
-- Windows:
-  - Install PostgreSQL from the official installer and add `<pgsql>\bin` to your `PATH`.
-
 ---
 
 ## Install
+You can install this tool with homebrew:
+```bash
+brew tap jayps/psql-transporter https://github.com/jayps/homebrew-psql-transporter
+brew install jayps/psql-transporter/psql-transporter
+```
 
 ```bash
 # clone your repo
@@ -210,7 +210,7 @@ lint:
 Module init & deps:
 
 ```bash
-go mod init github.com/you/psql-transporter
+go mod init github.com/jayps/psql-transporter
 go get github.com/spf13/cobra@latest
 go get github.com/AlecAivazis/survey/v2@v2.3.7
 go get gopkg.in/yaml.v3@v3.0.1
