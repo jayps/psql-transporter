@@ -101,4 +101,5 @@ jobs:
         token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         tap: jayps/homebrew-psql-transporter
         formula: psql-transporter
+        tag: v${{ github.ref_name }}
         force: true
