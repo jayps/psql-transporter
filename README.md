@@ -60,6 +60,7 @@ brew tap jayps/psql-transporter https://github.com/jayps/homebrew-psql-transport
 brew install jayps/psql-transporter/psql-transporter
 ```
 
+You can also build this tool from source:
 ```bash
 # clone your repo
 git clone https://github.com/jayps/psql-transporter.git
