@@ -95,11 +95,16 @@ jobs:
     needs: release
     runs-on: ubuntu-latest
     steps:
-    - name: Bump formula in tap repo
-      uses: dawidd6/action-homebrew-bump-formula@v5
-      with:
-        token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-        tap: jayps/homebrew-psql-transporter
-        formula: psql-transporter
-        tag: ${{ github.ref_name }}
-        force: true
+      - name: Bump formula in tap repo
+        uses: dawidd6/action-homebrew-bump-formula@v5
+        env:
+          HOMEBREW_GITHUB_API_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        with:
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          tap: jayps/homebrew-psql-transporter
+          formula: psql-transporter
+          tag: ${{ github.ref_name }}
+          no_fork: true
+          force: true
+          user_name: "JP Meyer"
+          user_email: "jp@jpmeyer.dev"
