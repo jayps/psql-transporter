@@ -49,38 +49,101 @@ func main() {
 			for i, s := range c.Sources {
 				names[i] = s.Name
 			}
-			srcName, err := ui.Select("Select SOURCE database:", names)
-			if err != nil {
-				return err
-			}
-			dstName, err := ui.Select("Select DESTINATION database:", names)
+			loadFromFileOption := "Load from file"
+			namesSrc := make([]string, 0, len(names)+1)
+			namesSrc = append(namesSrc, names...)
+			namesSrc = append(namesSrc, loadFromFileOption)
+			srcSel, err := ui.Select("Select SOURCE:", namesSrc)
 			if err != nil {
 				return err
 			}
 
-			var src, dst *config.Source
-			for i := range c.Sources {
-				if c.Sources[i].Name == srcName {
-					src = &c.Sources[i]
+			var src *config.Source
+			srcIsFile := false
+			srcFile := ""
+			if srcSel == loadFromFileOption {
+				// Source is a dump file
+				defPath := filepath.Join(".", "dump.sql")
+				filePath, err := ui.InputExistingFile("Enter input dump file path:", defPath)
+				if err != nil {
+					return err
 				}
-				if c.Sources[i].Name == dstName {
-					dst = &c.Sources[i]
+				srcIsFile = true
+				srcFile = filePath
+			} else {
+				// Find source DB
+				for i := range c.Sources {
+					if c.Sources[i].Name == srcSel {
+						src = &c.Sources[i]
+						break
+					}
+				}
+				if src == nil {
+					return errors.New("invalid source selection")
 				}
 			}
-			if src == nil || dst == nil {
-				return errors.New("invalid selection")
+
+			// Build destination options
+			dumpToFileOption := "Dump to file"
+			namesDst := make([]string, 0, len(names)+1)
+			namesDst = append(namesDst, names...)
+			if !srcIsFile {
+				// Only allow dump-to-file when source is a DB
+				namesDst = append(namesDst, dumpToFileOption)
+			}
+			dstName, err := ui.Select("Select DESTINATION:", namesDst)
+			if err != nil {
+				return err
+			}
+
+			ctx, cancel := psql.DefaultTimeoutCtx()
+			defer cancel()
+
+			if !srcIsFile && dstName == dumpToFileOption {
+				// DB -> File (export only)
+				defPath := filepath.Join(".", "dump.sql")
+				filePath, err := ui.Input("Enter output dump file path:", defPath)
+				if err != nil {
+					return err
+				}
+				if err := ui.RunSteps([]ui.Step{{
+					Title: "Exporting...",
+					Run: func() error { return psql.Dump(ctx, toConn(*src), filePath) },
+				}}); err != nil {
+					return err
+				}
+				fmt.Println("Dump written to", filePath)
+				fmt.Println("All done ✅")
+				return nil
+			}
+
+			// Destination must be a DB at this point
+			var dst *config.Source
+			for i := range c.Sources {
+				if c.Sources[i].Name == dstName {
+					dst = &c.Sources[i]
+					break
+				}
+			}
+			if dst == nil {
+				return errors.New("invalid destination selection")
 			}
 			if dst.Protected {
 				return fmt.Errorf("destination %q is protected; aborting", dst.Name)
 			}
-			if src.Name == dst.Name {
+
+			if !srcIsFile && src.Name == dst.Name {
 				return fmt.Errorf("source and destination cannot be the same")
 			}
 
-			ok, err := ui.ConfirmDanger(fmt.Sprintf(
-				"DESTINATION %q will be WIPED and replaced with %q. Continue?",
-				dst.Name, src.Name,
-			))
+			// Confirm destructive action
+			var confirmMsg string
+			if srcIsFile {
+				confirmMsg = fmt.Sprintf("DESTINATION %q will be WIPED and replaced with contents of %q. Continue?", dst.Name, srcFile)
+			} else {
+				confirmMsg = fmt.Sprintf("DESTINATION %q will be WIPED and replaced with %q. Continue?", dst.Name, src.Name)
+			}
+			ok, err := ui.ConfirmDanger(confirmMsg)
 			if err != nil {
 				return err
 			}
@@ -89,25 +152,25 @@ func main() {
 				return nil
 			}
 
-			dumpPath := filepath.Join(".", "dump.sql")
-			ctx, cancel := psql.DefaultTimeoutCtx()
-			defer cancel()
+			if srcIsFile {
+				// File -> DB: wipe then import from file
+				if err := ui.RunSteps([]ui.Step{
+					{Title: "Wiping destination...", Run: func() error { return psql.Wipe(ctx, toConn(*dst)) }},
+					{Title: "Importing...", Run: func() error { return psql.Import(ctx, toConn(*dst), srcFile) }},
+				}); err != nil {
+					return err
+				}
+				fmt.Println("All done ✅")
+				return nil
+			}
 
-			err = ui.RunSteps([]ui.Step{
-				{
-					Title: "Exporting...",
-					Run:   func() error { return psql.Dump(ctx, toConn(*src), dumpPath) },
-				},
-				{
-					Title: "Wiping destination...",
-					Run:   func() error { return psql.Wipe(ctx, toConn(*dst)) },
-				},
-				{
-					Title: "Importing...",
-					Run:   func() error { return psql.Import(ctx, toConn(*dst), dumpPath) },
-				},
-			})
-			if err != nil {
+			// DB -> DB flow (export, wipe, import)
+			dumpPath := filepath.Join(".", "dump.sql")
+			if err := ui.RunSteps([]ui.Step{
+				{Title: "Exporting...", Run: func() error { return psql.Dump(ctx, toConn(*src), dumpPath) }},
+				{Title: "Wiping destination...", Run: func() error { return psql.Wipe(ctx, toConn(*dst)) }},
+				{Title: "Importing...", Run: func() error { return psql.Import(ctx, toConn(*dst), dumpPath) }},
+			}); err != nil {
 				return err
 			}
 

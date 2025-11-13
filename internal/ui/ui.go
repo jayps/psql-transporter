@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/pterm/pterm"
@@ -12,6 +13,40 @@ func Select(label string, options []string) (string, error) {
 	prompt := &survey.Select{Message: label, Options: options}
 	err := survey.AskOne(prompt, &out)
 	return out, err
+}
+
+func Input(label, def string) (string, error) {
+	var out string
+	prompt := &survey.Input{Message: label, Default: def}
+	err := survey.AskOne(prompt, &out, survey.WithValidator(survey.Required))
+	return out, err
+}
+
+// InputExistingFile prompts for a file path and validates that it exists and is a file.
+func InputExistingFile(label, def string) (string, error) {
+	var out string
+	prompt := &survey.Input{Message: label, Default: def}
+	existsValidator := func(ans interface{}) error {
+		s, ok := ans.(string)
+		if !ok {
+			return fmt.Errorf("invalid input")
+		}
+		if s == "" {
+			return fmt.Errorf("path is required")
+		}
+		fi, err := os.Stat(s)
+		if err != nil {
+			return fmt.Errorf("file does not exist: %v", err)
+		}
+		if fi.IsDir() {
+			return fmt.Errorf("path is a directory")
+		}
+		return nil
+	}
+	if err := survey.AskOne(prompt, &out, survey.WithValidator(existsValidator)); err != nil {
+		return "", err
+	}
+	return out, nil
 }
 
 func ConfirmDanger(msg string) (bool, error) {
