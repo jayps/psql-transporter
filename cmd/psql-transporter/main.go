@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	"github.com/pterm/pterm"
 
 	"github.com/jayps/psql-transporter/internal/config"
 	"github.com/jayps/psql-transporter/internal/psql"
@@ -106,12 +107,16 @@ func main() {
 				if err != nil {
 					return err
 				}
-				if err := ui.RunSteps([]ui.Step{{
-					Title: "Exporting...",
-					Run: func() error { return psql.Dump(ctx, toConn(*src), filePath) },
-				}}); err != nil {
+				// Use a spinner and update its text with the file size as the dump progresses
+				spinner, _ := pterm.DefaultSpinner.Start("Exporting...")
+				err = psql.DumpWithProgress(ctx, toConn(*src), filePath, func(sz int64) {
+					spinner.UpdateText(fmt.Sprintf("Exporting... (%s)", humanSize(sz)))
+				})
+				if err != nil {
+					spinner.Fail(fmt.Sprintf("Export failed: %v", err))
 					return err
 				}
+				spinner.Success("Export completed")
 				fmt.Println("Dump written to", filePath)
 				fmt.Println("All done ✅")
 				return nil
@@ -166,8 +171,17 @@ func main() {
 
 			// DB -> DB flow (export, wipe, import)
 			dumpPath := filepath.Join(".", "dump.sql")
+			// Custom export step with progress shown in the spinner text
+			spinner, _ := pterm.DefaultSpinner.Start("Exporting...")
+			err = psql.DumpWithProgress(ctx, toConn(*src), dumpPath, func(sz int64) {
+				spinner.UpdateText(fmt.Sprintf("Exporting... (%s)", humanSize(sz)))
+			})
+			if err != nil {
+				spinner.Fail(fmt.Sprintf("Export failed: %v", err))
+				return err
+			}
+			spinner.Success("Export completed")
 			if err := ui.RunSteps([]ui.Step{
-				{Title: "Exporting...", Run: func() error { return psql.Dump(ctx, toConn(*src), dumpPath) }},
 				{Title: "Wiping destination...", Run: func() error { return psql.Wipe(ctx, toConn(*dst)) }},
 				{Title: "Importing...", Run: func() error { return psql.Import(ctx, toConn(*dst), dumpPath) }},
 			}); err != nil {
@@ -191,4 +205,24 @@ func toConn(s config.Source) psql.Conn {
 		User: s.User, Password: s.Password,
 		DBName: s.DBName, SSLMode: s.SSLMode,
 	}
+}
+
+
+// humanSize returns a human-friendly file size using binary units.
+func humanSize(b int64) string {
+	const unit = 1024
+	if b < unit {
+		return fmt.Sprintf("%d B", b)
+	}
+	d := float64(b)
+	var i int
+	for n := b / unit; n >= unit; n /= unit {
+		i++
+	}
+	prefix := []string{"KiB", "MiB", "GiB", "TiB", "PiB", "EiB"}
+	val := d / float64(int64(unit)<<(10*i))
+	if i >= len(prefix) {
+		return fmt.Sprintf("%d B", b)
+	}
+	return fmt.Sprintf("%.1f %s", val, prefix[i])
 }
