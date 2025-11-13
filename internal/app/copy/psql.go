@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync/atomic"
 	"time"
 )
 
@@ -109,22 +110,91 @@ func Wipe(ctx context.Context, dst Conn) error {
 	return nil
 }
 
-func Import(ctx context.Context, dst Conn, file string) error {
-	args := append(dst.baseArgs(), "-f", file)
+// ImportWithProgress streams the SQL file into psql via stdin and periodically
+// reports progress via onProgress(done, total). If onProgress is nil, no progress
+// is reported. Output from psql is suppressed unless there's an error.
+func ImportWithProgress(ctx context.Context, dst Conn, file string, onProgress func(done, total int64)) error {
+	f, err := os.Open(file)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	total := fi.Size()
+
+	// Set up psql reading from stdin so we can measure bytes sent.
+	args := dst.baseArgs()
 	cmd := exec.CommandContext(ctx, "psql", args...)
 	cmd.Env = dst.env()
-	// Hide noisy psql output during import
 	cmd.Stdout = io.Discard
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+
+	var done int64
+	// countingWriter increments the done counter for each byte passed through.
+	countingWriter := writerFunc(func(p []byte) (int, error) {
+		n := len(p)
+		atomic.AddInt64(&done, int64(n))
+		return n, nil
+	})
+	tee := io.TeeReader(f, countingWriter)
+	cmd.Stdin = tee
+
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+
+	// Periodically invoke progress callback while import runs
+	ticker := time.NewTicker(500 * time.Millisecond)
+	quit := make(chan struct{})
+	progressDone := make(chan struct{})
+	go func() {
+		defer close(progressDone)
+		for {
+			select {
+			case <-ticker.C:
+				if onProgress != nil {
+					onProgress(atomic.LoadInt64(&done), total)
+				}
+			case <-quit:
+				return
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
+
+	err = cmd.Wait()
+	ticker.Stop()
+	close(quit)
+	<-progressDone
+	if err != nil {
 		if stderr.Len() > 0 {
 			return fmt.Errorf("psql import failed: %v\n%s", err, stderr.String())
 		}
 		return err
 	}
+	// Final progress update to 100%
+	if onProgress != nil {
+		onProgress(total, total)
+	}
 	return nil
 }
+
+// Import keeps backward compatibility without progress reporting.
+func Import(ctx context.Context, dst Conn, file string) error {
+	return ImportWithProgress(ctx, dst, file, nil)
+}
+
+// writerFunc is an adapter to allow the use of ordinary functions as io.Writer.
+// If f is a function with the appropriate signature, writerFunc(f) is an io.Writer
+// that calls f.
+type writerFunc func(p []byte) (n int, err error)
+
+func (f writerFunc) Write(p []byte) (n int, err error) { return f(p) }
 
 func DefaultTimeoutCtx() (context.Context, context.CancelFunc) {
 	return context.WithTimeout(context.Background(), 30*time.Minute)

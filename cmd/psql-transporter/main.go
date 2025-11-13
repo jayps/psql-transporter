@@ -158,13 +158,28 @@ func main() {
 			}
 
 			if srcIsFile {
-				// File -> DB: wipe then import from file
+				// File -> DB: wipe then import from file with progress
 				if err := ui.RunSteps([]ui.Step{
 					{Title: "Wiping destination...", Run: func() error { return psql.Wipe(ctx, toConn(*dst)) }},
-					{Title: "Importing...", Run: func() error { return psql.Import(ctx, toConn(*dst), srcFile) }},
 				}); err != nil {
 					return err
 				}
+				spinner, _ := pterm.DefaultSpinner.Start("Importing...")
+				err := psql.ImportWithProgress(ctx, toConn(*dst), srcFile, func(done, total int64) {
+					var text string
+					if total > 0 {
+						pct := float64(done) / float64(total) * 100
+						text = fmt.Sprintf("Importing... (%.1f%%)", pct)
+					} else {
+						text = fmt.Sprintf("Importing... (%s)", humanSize(done))
+					}
+					spinner.UpdateText(text)
+				})
+				if err != nil {
+					spinner.Fail(fmt.Sprintf("Import failed: %v", err))
+					return err
+				}
+				spinner.Success("Import completed")
 				fmt.Println("All done ✅")
 				return nil
 			}
@@ -183,10 +198,25 @@ func main() {
 			spinner.Success("Export completed")
 			if err := ui.RunSteps([]ui.Step{
 				{Title: "Wiping destination...", Run: func() error { return psql.Wipe(ctx, toConn(*dst)) }},
-				{Title: "Importing...", Run: func() error { return psql.Import(ctx, toConn(*dst), dumpPath) }},
 			}); err != nil {
 				return err
 			}
+			impSpinner, _ := pterm.DefaultSpinner.Start("Importing...")
+			err = psql.ImportWithProgress(ctx, toConn(*dst), dumpPath, func(done, total int64) {
+				var text string
+				if total > 0 {
+					pct := float64(done) / float64(total) * 100
+					text = fmt.Sprintf("Importing... (%.1f%%)", pct)
+				} else {
+					text = fmt.Sprintf("Importing... (%s)", humanSize(done))
+				}
+				impSpinner.UpdateText(text)
+			})
+			if err != nil {
+				impSpinner.Fail(fmt.Sprintf("Import failed: %v", err))
+				return err
+			}
+			impSpinner.Success("Import completed")
 
 			fmt.Println("All done ✅")
 			return nil
