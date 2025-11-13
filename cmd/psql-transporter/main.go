@@ -7,8 +7,8 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
 	"github.com/pterm/pterm"
+	"github.com/spf13/cobra"
 
 	"github.com/jayps/psql-transporter/internal/config"
 	"github.com/jayps/psql-transporter/internal/psql"
@@ -84,10 +84,20 @@ func main() {
 				}
 			}
 
-			// Build destination options
+			// Build destination options (omit protected databases and the same as source)
 			dumpToFileOption := "Dump to file"
 			namesDst := make([]string, 0, len(names)+1)
-			namesDst = append(namesDst, names...)
+			for _, s := range c.Sources {
+				// skip protected databases for destination choices
+				if s.Protected {
+					continue
+				}
+				// if source is a DB, do not allow selecting the same DB as destination
+				if !srcIsFile && src != nil && s.Name == src.Name {
+					continue
+				}
+				namesDst = append(namesDst, s.Name)
+			}
 			if !srcIsFile {
 				// Only allow dump-to-file when source is a DB
 				namesDst = append(namesDst, dumpToFileOption)
@@ -236,7 +246,6 @@ func toConn(s config.Source) psql.Conn {
 		DBName: s.DBName, SSLMode: s.SSLMode,
 	}
 }
-
 
 // humanSize returns a human-friendly file size using binary units.
 func humanSize(b int64) string {
