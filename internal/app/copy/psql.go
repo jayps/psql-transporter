@@ -1,8 +1,10 @@
 package copy
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"time"
@@ -48,18 +50,34 @@ func Wipe(ctx context.Context, dst Conn) error {
 	)
 	cmd := exec.CommandContext(ctx, "psql", args...)
 	cmd.Env = dst.env()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	// Hide psql output during wipe as well
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("psql wipe failed: %v\n%s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }
 
 func Import(ctx context.Context, dst Conn, file string) error {
 	args := append(dst.baseArgs(), "-f", file)
 	cmd := exec.CommandContext(ctx, "psql", args...)
 	cmd.Env = dst.env()
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	// Hide noisy psql output during import
+	cmd.Stdout = io.Discard
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		if stderr.Len() > 0 {
+			return fmt.Errorf("psql import failed: %v\n%s", err, stderr.String())
+		}
+		return err
+	}
+	return nil
 }
 
 func DefaultTimeoutCtx() (context.Context, context.CancelFunc) {
